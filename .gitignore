@@ -37,3 +37,6 @@ next-env.d.ts
 
 # local task files — never commit
 tasks/
+
+# other personal files
+tracker.md
