@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import {z} from 'zod'
 
 const systemPrompt = `You are an agent in an economic village simulation.
 Each turn you choose one action. Available actions:
@@ -15,7 +16,25 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
 }
 Only include "trade" if action is TRADE.`
 
-export async function callAgent(model: string, prompt: string){
+export const DecisionSchema = z.object({
+    action: z.enum(["FARM", "MINE", "TRADE", "REST"]),
+    trade: z.object({
+        with: z.string(),
+        offer: z.object({
+            resource: z.enum(["food", "ore", "gold"]),
+            amount: z.number().int()
+        }),
+        request: z.object({
+            resource: z.enum(["food", "ore", "gold"]),
+            amount: z.number().int()
+        })
+    }).optional(),
+    reasoning: z.string()
+  })
+
+export type Decision = z.infer<typeof DecisionSchema>
+
+export async function callAgent(model: string, prompt: string): Promise<Decision> {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY})
     const msg = await client.messages.create({
         model: model,
@@ -25,7 +44,8 @@ export async function callAgent(model: string, prompt: string){
     })
 
     const response = msg.content[0]
-    if (response.type === 'text'){
-        return JSON.parse(response.text)
+    if (response.type !== 'text') {
+        throw new Error(`Unexpected response type: ${response.type}`)
     }
+    return DecisionSchema.parse(JSON.parse(response.text))
 }
