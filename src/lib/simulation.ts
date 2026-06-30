@@ -75,5 +75,45 @@ export function resolveDecisions(
         }
     }
 
+    // resolve trades — MVP: both agents must independently propose the mirror trade.
+    // (Known weak: relies on coincidence. Redesign lives on branch `negotiating-trade-offers`.)
+    const trades = Object.entries(decisions).filter(
+        ([, d]) => d.action === "TRADE" && d.trade
+    )
+
+    for (const [nameA, decA] of trades) {
+        const tA = decA.trade!
+
+        // find a partner whose trade is the exact mirror of A's
+        const partner = trades.find(([nameB, decB]) => {
+            const tB = decB.trade!
+            return (
+                nameB === tA.with &&
+                tB.with === nameA &&
+                tB.offer.resource === tA.request.resource &&
+                tB.offer.amount === tA.request.amount &&
+                tB.request.resource === tA.offer.resource &&
+                tB.request.amount === tA.offer.amount
+            )
+        })
+        if (!partner) continue
+
+        const [nameB] = partner
+        if (nameA > nameB) continue // execute each matched pair only once
+
+        const invA = next.agents[nameA]
+        const invB = next.agents[nameB]
+
+        // affordability — skip if either side can't cover what it offered
+        if (invA[tA.offer.resource] < tA.offer.amount) continue
+        if (invB[tA.request.resource] < tA.request.amount) continue
+
+        // execute the swap: A gives offer, gets request; B is the mirror
+        invA[tA.offer.resource] -= tA.offer.amount
+        invA[tA.request.resource] += tA.request.amount
+        invB[tA.request.resource] -= tA.request.amount
+        invB[tA.offer.resource] += tA.offer.amount
+    }
+
     return next
     }
