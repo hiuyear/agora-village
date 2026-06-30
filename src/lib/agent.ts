@@ -48,4 +48,4 @@ export async function callAgent(model: string, prompt: string): Promise<Decision
         throw new Error(`Unexpected response type: ${response.type}`)
     }
     return DecisionSchema.parse(JSON.parse(response.text))
-}
+} 
