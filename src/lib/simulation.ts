@@ -1,6 +1,5 @@
-import { Decision } from "./agent"
+import { Decision, callAgent } from "./agent"
 import { supabase } from '@/lib/supabase'
-import { callAgent } from './agent'
 
 export type AgentConfig = {
     name: string,
