@@ -181,8 +181,9 @@ export async function advanceTurn(runId: string): Promise<SimState> {
             return { agent, decision }
         })
     )
-    // results shape: [{agent.name, agent.decision}, {...}]
+
     const decisions = Object.fromEntries(results.map((r) => [r.agent.name, r.decision]))
+    // results shape: [{agent.name, agent.decision}, {...}]
     // mapped shape: [[agent.name, agent.decision], [...]]
     // decisions shape: { agent.name: agent.decision, ..., }
     
@@ -190,7 +191,36 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     // 4. RESOLVE: resolveDecisions(state, decisions, configs) -> nextState
 
     const nextState = resolveDecisions(currentState, decisions, config.agents)
+
     // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
+
+    // 5.1. save to TURNS table
+    const { error: turnError } = await supabase.from("turns").insert({
+        run_id: runId,
+        turn_number: nextState.turn,
+        state: nextState,
+    })
+
+    if (turnError) throw new Error(turnError.message)
+
+    // 5.2. save to DECISIONS table
+    const decisionRows = results.map((r) => ({
+        run_id: runId,
+        turn_number: nextState.turn,
+        agent_id: r.agent.name,
+        agent_model: r.agent.model,
+        action: r.decision.action,
+        target: r.decision.trade?.with ?? null,
+        offer: r.decision.trade?.offer ?? null,
+        request: r.decision.trade?.request ?? null,
+        reasoning: r.decision.reasoning,
+        raw_response: null,
+        outcome: null,
+    }))
+
+    // insert all decisions at once as an array into supabase
+    const { error: decisionsError } = await supabase.from("decisions").insert(decisionRows)
+    if (decisionsError) throw new Error(decisionsError.message)
     
     return nextState
 }
