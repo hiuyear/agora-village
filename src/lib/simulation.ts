@@ -1,4 +1,6 @@
 import { Decision } from "./agent"
+import { supabase } from '@/lib/supabase'
+import { callAgent } from './agent'
 
 export type AgentConfig = {
     name: string,
@@ -13,6 +15,12 @@ export type SimState = {
 }
 
 export type Inventory = { food: number; ore: number; gold: number}
+
+export type RunConfig = {
+    agents: AgentConfig[]
+    startingInventory: Inventory
+    turns: number
+}
 
 
 export function buildPrompt(agent: AgentConfig, state: SimState): string {
@@ -117,3 +125,72 @@ export function resolveDecisions(
 
     return next
     }
+
+export async function advanceTurn(runId: string): Promise<SimState> {
+
+    // 1. READ:    load run config + latest turn's state from Supabase
+    const {data: run, error} = await supabase
+        .from('runs')
+        .select("config, status")
+        .eq("id", runId)
+        .single()
+
+    if (error || !run) throw new Error(error?.message ?? "Run not found")
+
+    const config = run.config as RunConfig
+    /* shape: 
+    {
+    agents: AgentConfig[]          ← a LIST of per-agent settings
+    startingInventory: Inventory
+    turns: number
+    }
+    */
+
+    const { data: lastTurn } = await supabase
+    .from("turns")
+    .select("state, turn_number")
+    .eq("run_id", runId)
+    .order("turn_number", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+    
+    // if no prior turn exists: build initial state from config.startinfgInventory
+    const currentState: SimState = lastTurn
+    ? (lastTurn.state as SimState)
+    : {
+        turn: 0,
+        agents: Object.fromEntries(
+            config.agents.map((a) => [a.name, { ...config.startingInventory }])
+        ),
+    }
+
+
+    // 2. PROMPT:  buildPrompt(agent, state) for each agent
+    // 3. ASK:     callAgent(model, prompt) for all agents IN PARALLEL
+
+    /* THIS IS SLOW!!! DISABLED
+    const decisions: Record<string, Decision> = {}
+    for (const agent of config.agents) {
+        decisions[agent.name] = await callAgent(agent.model, buildPrompt(agent, currentState))
+    }
+    */
+
+    const results = await Promise.all(
+        config.agents.map(async (agent) => {
+            const decision = await callAgent(agent.model, buildPrompt(agent, currentState))
+            return { agent, decision }
+        })
+    )
+    // results shape: [{agent.name, agent.decision}, {...}]
+    const decisions = Object.fromEntries(results.map((r) => [r.agent.name, r.decision]))
+    // mapped shape: [[agent.name, agent.decision], [...]]
+    // decisions shape: { agent.name: agent.decision, ..., }
+    
+
+    // 4. RESOLVE: resolveDecisions(state, decisions, configs) -> nextState
+
+    const nextState = resolveDecisions(currentState, decisions, config.agents)
+    // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
+    
+    return nextState
+}
