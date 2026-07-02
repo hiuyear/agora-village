@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest, {params}: {params: {id: string}}){
     const {id} = params
     
-    const {data, error} = await supabase.from('runs').select('*').eq('id',id).single()
+    const {data, error} = await supabase.from('runs').select('id, created_at, name, status, config, current_turn').eq('id',id).single()
 
     if (error){
         return NextResponse.json({error: error.message}, {status: 500})
