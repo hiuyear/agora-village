@@ -21,3 +21,17 @@ export async function POST(request: NextRequest){
 
     return NextResponse.json({ id: data.id, creatorToken }, { status: 201 })
 }
+
+export async function GET(request: NextRequest){
+    const { data, error } = await supabase
+    .from('runs')
+    .select('id, created_at, name, status, config, current_turn')
+    .order( 'created_at' , {ascending: false} )             // newest-first ordering
+
+    if (error) {          
+        return NextResponse.json( { error: 'Unable to retrieve runs'} , { status: 500 })
+    }
+
+
+    return NextResponse.json(data)
+}
