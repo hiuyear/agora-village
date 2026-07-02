@@ -35,18 +35,54 @@ export const DecisionSchema = z.object({
 
 export type Decision = z.infer<typeof DecisionSchema>
 
-export async function callAgent(model: string, prompt: string): Promise<Decision> {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY})
-    const msg = await client.messages.create({
-        model: model,
-        max_tokens: 300,
-        system: systemPrompt,
-        messages: [{role: 'user', content: prompt}],
-    })
+// Models sometimes wrap JSON in a markdown code fence (```json ... ```)
+// despite being told not to. Strip it before parsing.
+function stripCodeFence(raw: string): string {
+    const text = raw.trim()
+    if (!text.startsWith("```")) return text
+    return text
+        .replace(/^```(?:json)?\s*/, "")
+        .replace(/\s*```$/, "")
+        .trim()
+}
 
-    const response = msg.content[0]
-    if (response.type !== 'text') {
-        throw new Error(`Unexpected response type: ${response.type}`)
+export async function callAgent(model: string, prompt: string): Promise<Decision> {
+    let text: string
+
+    if (model.startsWith("claude-")) {
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+        const msg = await client.messages.create({
+            model: model,
+            max_tokens: 300,
+            system: systemPrompt,
+            messages: [{ role: "user", content: prompt }],
+        })
+
+        const response = msg.content[0]
+        if (response.type !== "text") {
+            throw new Error(`Unexpected response type: ${response.type}`)
+        }
+        text = response.text
+    } else if (model.startsWith("gpt-")) {
+        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+        const completion = await client.chat.completions.create({
+            model: model,
+            max_tokens: 300,
+            response_format: { type: "json_object" },
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: prompt },
+            ],
+        })
+
+        const content = completion.choices[0].message.content
+        if (content === null) {
+            throw new Error("OpenAI returned empty content")
+        }
+        text = content
+    } else {
+        throw new Error(`Unknown model provider: ${model}`)
     }
-    return DecisionSchema.parse(JSON.parse(response.text))
-} 
+
+    return DecisionSchema.parse(JSON.parse(stripCodeFence(text)))
+}
