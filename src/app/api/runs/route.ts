@@ -23,15 +23,20 @@ export async function POST(request: NextRequest){
 }
 
 export async function GET(request: NextRequest){
+
+    const { searchParams } = request.nextUrl // example GET call: 
+    let limit = Math.min(Number(searchParams.get('limit')) || 10, 50) // set default as 10 if limit not provided in URL; cap at 50
+    const offset = Number(searchParams.get('offset')) || 0 // # of rows to SKIP from top of ordered list
+
     const { data, error } = await supabase
     .from('runs')
     .select('id, created_at, name, status, config, current_turn')
     .order( 'created_at' , {ascending: false} )             // newest-first ordering
+    .range(offset, offset + limit - 1)
 
     if (error) {          
         return NextResponse.json( { error: 'Unable to retrieve runs'} , { status: 500 })
     }
-
 
     return NextResponse.json(data)
 }
