@@ -10,9 +10,10 @@ export async function POST(request: NextRequest, {params}: {params: {id: string}
 
     let turns
     if (body.turns !== undefined){
+        // if body is provided, ie. turn number (body has shape {turns: n})
         turns = body.turns
     } else {
-        // config.turns from the DB
+        // config.turns from supabase using id
         const { data, error } = await supabase
             .from('runs')
             .select('config')
