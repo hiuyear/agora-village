@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import OpenAI from "openai"
 import {z} from 'zod'
 
 const systemPrompt = `You are an agent in an economic village simulation.
