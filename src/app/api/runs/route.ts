@@ -11,7 +11,7 @@ export async function POST(request: NextRequest){
 
     const { data, error } = await supabase
         .from('runs')
-        .insert({ name, creator_token: hashedToken, config })
+        .insert({ name, creator_token: hashedToken, config, status: "pending"})
         .select()
         .single()
 
