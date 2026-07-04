@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { advanceTurn } from '@/lib/simulation'
 import { supabase } from '@/lib/supabase'
+import { requireCreator } from '@/lib/auth'
 
 export async function POST(request: NextRequest, {params}: {params: {id: string}}) {
 
     const {id} = params
+
+    const authError = await requireCreator(request, id)
+    if (authError) return authError
 
     const body = await request.json()
 
