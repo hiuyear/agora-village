@@ -1,4 +1,5 @@
 import { Decision, callAgent } from "./agent"
+import { computeMetrics } from "./metrics"
 import { supabase } from '@/lib/supabase'
 
 export type AgentConfig = {
@@ -45,12 +46,6 @@ export function buildPrompt(agent: AgentConfig, state: SimState): string {
     Decide your action.`
 }
 
-/*
-two designs: Seed everything up front: right after you create the outcomes object, 
-loop over Object.keys(next.agents) and set every agent to "no_trade". 
-Then FARM/MINE/REST overwrite to "ok", and successful trades overwrite to "traded".
-one place, impossible to miss anyone.
-*/
 export function resolveDecisions(
     state: SimState,
     decisions: Record<string, Decision>,
@@ -64,9 +59,9 @@ export function resolveDecisions(
     ),
     }
 
-    // Seed EVERY agent pessimistically up front (default-then-upgrade): coverage
+    // seed EVERY agent pessimistically up front (default-then-upgrade). coverage
     // is guaranteed in one unconditional statement; every branch below only
-    // OVERWRITES. FARM/MINE/REST → "ok"; a trade that executes → "traded";
+    // OVERWRITES. FARM/MINE/REST -> "ok"; a trade that executes -> "traded";
     // anything left untouched keeps "no_trade".
     const outcomes: Record<string, string> = Object.fromEntries(
         Object.keys(next.agents).map((name) => [name, "no_trade"])
@@ -161,7 +156,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     const config = run.config as RunConfig
     /* shape: 
     {
-    agents: AgentConfig[]          ← a LIST of per-agent settings
+    agents: AgentConfig[]          <- a LIST of per-agent settings
     startingInventory: Inventory
     turns: number
     }
@@ -215,11 +210,16 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
 
+    // metrics describe THIS turn: gini over the resulting gold distribution,
+    // plus the actions/trades that produced it (this turn's decisions + outcomes).
+    const metrics = computeMetrics(nextState, decisions, outcomes)
+
     // 5.1. save to TURNS table
     const { error: turnError } = await supabase.from("turns").insert({
         run_id: runId,
         turn_number: nextState.turn,
         state: nextState,
+        metrics: metrics,
     })
 
     if (turnError) throw new Error(turnError.message)
