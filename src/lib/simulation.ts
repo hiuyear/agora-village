@@ -45,11 +45,17 @@ export function buildPrompt(agent: AgentConfig, state: SimState): string {
     Decide your action.`
 }
 
+/*
+two designs: Seed everything up front: right after you create the outcomes object, 
+loop over Object.keys(next.agents) and set every agent to "no_trade". 
+Then FARM/MINE/REST overwrite to "ok", and successful trades overwrite to "traded".
+one place, impossible to miss anyone.
+*/
 export function resolveDecisions(
     state: SimState,
     decisions: Record<string, Decision>,
     config: AgentConfig[]
-    ): SimState {
+    ): { next: SimState; outcomes: Record<string, string> } { // outcomes -> {agentA, action}
 
     const next: SimState = {
     turn: state.turn + 1,
@@ -57,6 +63,14 @@ export function resolveDecisions(
         Object.entries(state.agents).map(([name, inv]) => [name, { ...inv }])
     ),
     }
+
+    // Seed EVERY agent pessimistically up front (default-then-upgrade): coverage
+    // is guaranteed in one unconditional statement; every branch below only
+    // OVERWRITES. FARM/MINE/REST → "ok"; a trade that executes → "traded";
+    // anything left untouched keeps "no_trade".
+    const outcomes: Record<string, string> = Object.fromEntries(
+        Object.keys(next.agents).map((name) => [name, "no_trade"])
+    )
 
     // every turn, each agent loses 1 food
     for (const name of Object.keys(next.agents)) {
@@ -72,12 +86,15 @@ export function resolveDecisions(
 
         if (decision.action === "FARM") {
             inv.food += (specialty === "farmer" ? 5 : 3)
+            outcomes[name] = "ok"
             // 5 if farmer, else 3
         } else if (decision.action === "MINE") {
             inv.ore += (specialty === "miner" ? 3 : 2)
+            outcomes[name] = "ok"
             // 3 if miner, else 2
         } else if (decision.action === "REST") {
             inv.gold += 1
+            outcomes[name] = "ok"
             // gold is the trade medium.
         }
     }
@@ -120,9 +137,14 @@ export function resolveDecisions(
         invA[tA.request.resource] += tA.request.amount
         invB[tA.request.resource] -= tA.request.amount
         invB[tA.offer.resource] += tA.offer.amount
+
+        // both sides of the swap just traded — upgrade BOTH from "no_trade"
+        outcomes[nameA] = "traded"
+        outcomes[nameB] = "traded"
+
     }
 
-    return next
+    return { next, outcomes }
     }
 
 export async function advanceTurn(runId: string): Promise<SimState> {
@@ -189,7 +211,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     // 4. RESOLVE: resolveDecisions(state, decisions, configs) -> nextState
 
-    const nextState = resolveDecisions(currentState, decisions, config.agents)
+    const { next: nextState, outcomes } = resolveDecisions(currentState, decisions, config.agents)
 
     // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
 
@@ -214,7 +236,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
         request: r.decision.trade?.request ?? null,
         reasoning: r.decision.reasoning,
         raw_response: null,
-        outcome: null,
+        outcome: outcomes[r.agent.name],
     }))
 
     // insert all decisions at once as an array into supabase
