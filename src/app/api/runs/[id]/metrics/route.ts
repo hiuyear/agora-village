@@ -25,12 +25,36 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         ...(row.metrics as Record<string, unknown>),
     }))
 
+    // shape:
+    // {
+    //     "timeline": [
+    //       {
+    //         "turn_number": 1,
+    //         "gini": 0,
+    //         "tradeRate": 0,
+    //         "actionDist": { "FARM": 2, "MINE": 2, "REST": 1 }
+    //       },
+    //       {
+    //         "turn_number": 2,
+    //         "gini": 0.16,
+    //         "tradeRate": 0,
+    //         "actionDist": { "FARM": 1, "MINE": 1, "REST": 3 }
+    //       },
+    //       {
+    //         "turn_number": 3,
+    //         "gini": 0.24,
+    //         "tradeRate": 0.4,
+    //         "actionDist": { "FARM": 1, "REST": 2, "TRADE": 2 }
+    //       }
+    //     ]
+
     // 2. BY MODEL — group-by done in JS (dataset is tiny; at scale this moves into
     //    a Postgres view/RPC). Nested default-then-upgrade accumulator.
     const { data: decisionRows, error: decisionsError } = await supabase
         .from('decisions')
         .select('agent_model, action')
         .eq('run_id', id)
+    // note: decisions table -> for every run's every turn's every agent, has its own row
 
     if (decisionsError) {
         return NextResponse.json({ error: decisionsError.message }, { status: 500 })
@@ -38,9 +62,16 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     const byModel: Record<string, Record<string, number>> = {}
     for (const { agent_model, action } of decisionRows ?? []) {
-        byModel[agent_model] ??= {}
-        byModel[agent_model][action] = (byModel[agent_model][action] ?? 0) + 1
+        byModel[agent_model] ??= {} // new agent found, initalize 
+        byModel[agent_model][action] = (byModel[agent_model][action] ?? 0) + 1 // add count to each action given an agent
     }
+
+    // shape: 
+    // "byModel": {
+    // "claude-haiku-4-5": { "FARM": 3, "MINE": 2, "REST": 4 },
+    // "gpt-4o-mini":      { "MINE": 1, "REST": 2, "TRADE": 2 }
+    // }
+    //
 
     // Empty run → { timeline: [], byModel: {} } with 200 (empty result is success).
     return NextResponse.json({ timeline, byModel })
