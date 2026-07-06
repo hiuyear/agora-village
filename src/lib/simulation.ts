@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { Decision, callAgent } from "./agent"
 import { computeMetrics } from "./metrics"
 import { supabase } from '@/lib/supabase'
@@ -21,6 +22,15 @@ export type RunConfig = {
     startingInventory: Inventory
     turns: number
 }
+
+// Observer-injected shock. Validated at the API boundary (POST /intervene),
+// applied in advanceTurn BEFORE agents decide (deferred-effect, decision #17).
+export const InterventionSchema = z.object({
+    event_type: z.enum(["drought", "boom", "plague"]),
+    parameters: z.record(z.string(), z.any()).optional(),
+})
+
+export type InterventionEvent = z.infer<typeof InterventionSchema>
 
 
 export function buildPrompt(agent: AgentConfig, state: SimState): string {
@@ -142,6 +152,42 @@ export function resolveDecisions(
     return { next, outcomes }
     }
 
+//      "drought" → food = Math.floor(food * 0.5)     (scarcity)
+//      "boom"    → food += 5; ore += 5               (abundance)
+//      "plague"  → food, ore, gold each = Math.floor(x * 0.7)
+export function applyIntervention(state: SimState, event: InterventionEvent): SimState {
+    // make a copy to wokr with
+    const next: SimState = {
+        turn: state.turn,
+        agents: Object.fromEntries(
+            Object.entries(state.agents).map(([name, inv]) => [name, {...inv}])
+        )
+    }
+    // keep next.turn, since turn is already +1 in advanceTurn AFTER calling applyIntervention
+    if (event.event_type === 'drought'){
+        for (const name of Object.keys(next.agents)){
+            const inv = next.agents[name]
+            inv.food = Math.floor(inv.food * 0.5)
+        }
+        } else if (event.event_type === 'boom'){
+            for (const name of Object.keys(next.agents)){
+                const inv = next.agents[name]
+                inv.food += 5
+                inv.ore += 5
+            }
+            // apply boom on next
+        } else if (event.event_type === 'plague'){
+            // apply plague
+            for (const name of Object.keys(next.agents)){
+                const inv = next.agents[name]
+                inv.food = Math.floor(inv.food * 0.7)
+                inv.ore  = Math.floor(inv.ore  * 0.7)
+                inv.gold = Math.floor(inv.gold * 0.7)
+            }
+        }
+    return next
+}
+
 export async function advanceTurn(runId: string): Promise<SimState> {
 
     // 1. READ:    load run config + latest turn's state from Supabase
@@ -162,6 +208,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     }
     */
 
+    // from all turns of runId, take the latest turn data
     const { data: lastTurn } = await supabase
     .from("turns")
     .select("state, turn_number")
@@ -180,6 +227,24 @@ export async function advanceTurn(runId: string): Promise<SimState> {
         ),
     }
 
+    // 1.5 INTERVENE: apply any shocks scheduled for the turn we're about to produce,
+    // BEFORE agents decide — so they experience the shock this turn (decision #17).
+    // can apply multiple intervention events per turn.
+    // TODO (reproducibility): these apply in Supabase's arbitrary return order.
+    // Multiple shocks on one turn aren't perfectly commutative (Math.floor), so
+    // add .order('created_at', { ascending: true }) for deterministic replay.
+    const targetTurn = currentState.turn + 1
+    const { data: pendingInterventions } = await supabase
+        .from("interventions")
+        .select("event_type, parameters")
+        .eq("run_id", runId)
+        .eq("turn_number", targetTurn)
+
+    let workingState = currentState
+    for (const ev of pendingInterventions ?? []) {  // apply each state individually
+        workingState = applyIntervention(workingState, ev as InterventionEvent)
+    }
+
 
     // 2. PROMPT:  buildPrompt(agent, state) for each agent
     // 3. ASK:     callAgent(model, prompt) for all agents IN PARALLEL
@@ -193,7 +258,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     const results = await Promise.all(
         config.agents.map(async (agent) => {
-            const decision = await callAgent(agent.model, buildPrompt(agent, currentState))
+            const decision = await callAgent(agent.model, buildPrompt(agent, workingState))
             return { agent, decision }
         })
     )
@@ -206,7 +271,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     // 4. RESOLVE: resolveDecisions(state, decisions, configs) -> nextState
 
-    const { next: nextState, outcomes } = resolveDecisions(currentState, decisions, config.agents)
+    const { next: nextState, outcomes } = resolveDecisions(workingState, decisions, config.agents)
 
     // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
 
