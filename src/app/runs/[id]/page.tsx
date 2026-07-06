@@ -1,6 +1,9 @@
 import { supabase } from '@/lib/supabase'
 import ReplayViewer from './ReplayViewer'
 import type { DecisionRow, TurnRow } from './ReplayViewer'
+import LiveVillage from './LiveVillage'
+import LiveFeed from './LiveFeed'
+import InterventionControls from './InterventionControls'
 import MetricsDashboard from './MetricsDashboard'
 import type { TimelinePoint } from './MetricsDashboard'
 
@@ -98,7 +101,31 @@ export default async function RunPage({ params }: { params: { id: string } }) {
                 <p className="text-gray-500">No turns yet — this run hasn’t been started.</p>
             ) : (
                 <>
-                    <ReplayViewer turns={turnRows} decisionsByTurn={decisionsByTurn} />
+                    {/* Live view: seeded with the newest turn's state, then kept
+                        current by a Realtime subscription inside the component. */}
+                    <section className="mb-6">
+                        <h2 className="mb-3 text-lg font-semibold">Interventions</h2>
+                        <InterventionControls runId={id} />
+                    </section>
+
+                    <section className="mb-10">
+                        <LiveVillage runId={id} initialState={turnRows[turnRows.length - 1].state} />
+                    </section>
+
+                    <section className="mb-10">
+                        <h2 className="mb-4 text-lg font-semibold">Live activity</h2>
+                        <div className="rounded-lg border border-gray-200 p-5">
+                            <LiveFeed
+                                runId={id}
+                                initialFeed={((decisions ?? []) as DecisionRow[]).slice(-10).reverse()}
+                            />
+                        </div>
+                    </section>
+
+                    <section className="mb-10">
+                        <h2 className="mb-4 text-lg font-semibold">History</h2>
+                        <ReplayViewer turns={turnRows} decisionsByTurn={decisionsByTurn} />
+                    </section>
 
                     <section className="mt-10">
                         <h2 className="mb-4 text-lg font-semibold">Research metrics</h2>
