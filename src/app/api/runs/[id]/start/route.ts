@@ -51,6 +51,7 @@ export async function POST(request: NextRequest, {params}: {params: {id: string}
             return NextResponse.json({error: 'Unable to update completed status'}, {status: 500})
         }
     } catch (e) {
+        console.error(`Simulation failed for run ${id}:`, e)
         await supabase.from('runs').update({ status: 'error' }).eq('id', id)
         return NextResponse.json({ error: 'Simulation failed' }, { status: 500 })
     }
