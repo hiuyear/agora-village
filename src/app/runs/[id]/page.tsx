@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase'
 import ReplayViewer from './ReplayViewer'
 import type { DecisionRow, TurnRow } from './ReplayViewer'
+import MetricsDashboard from './MetricsDashboard'
+import type { TimelinePoint } from './MetricsDashboard'
 
 // Always render fresh — this is live simulation data, never a cached snapshot.
 export const dynamic = 'force-dynamic'
@@ -37,7 +39,7 @@ export default async function RunPage({ params }: { params: { id: string } }) {
     // 2. every turn snapshot, oldest first
     const { data: turns } = await supabase
         .from('turns')
-        .select('turn_number, state')
+        .select('turn_number, state, metrics')
         .eq('run_id', id)
         .order('turn_number', { ascending: true })
 
@@ -59,6 +61,23 @@ export default async function RunPage({ params }: { params: { id: string } }) {
     const agentNames: string[] = run.config?.agents?.map((a: { name: string }) => a.name) ?? []
     const turnRows = (turns ?? []) as TurnRow[]
 
+    // Research metrics, aggregated ON READ (same shape the /metrics endpoint serves):
+    // the per-turn timeline comes from turns.metrics; the per-model action tally from
+    // the decisions we already fetched. `?? 0` guards turns predating the metrics column.
+    type MetricRow = { turn_number: number; metrics: { gini?: number; tradeRate?: number; actionDist?: Record<string, number> } | null }
+    const timeline: TimelinePoint[] = ((turns ?? []) as MetricRow[]).map((t) => ({
+        turn_number: t.turn_number,
+        gini: t.metrics?.gini ?? 0,
+        tradeRate: t.metrics?.tradeRate ?? 0,
+        actionDist: t.metrics?.actionDist ?? {},
+    }))
+
+    const byModel: Record<string, Record<string, number>> = {}
+    for (const d of (decisions ?? []) as DecisionRow[]) {
+        byModel[d.agent_model] ??= {}
+        byModel[d.agent_model][d.action] = (byModel[d.agent_model][d.action] ?? 0) + 1
+    }
+
     return (
         <main className="mx-auto max-w-3xl p-8">
             {/* header */}
@@ -78,7 +97,14 @@ export default async function RunPage({ params }: { params: { id: string } }) {
             {turnRows.length === 0 ? (
                 <p className="text-gray-500">No turns yet — this run hasn’t been started.</p>
             ) : (
-                <ReplayViewer turns={turnRows} decisionsByTurn={decisionsByTurn} />
+                <>
+                    <ReplayViewer turns={turnRows} decisionsByTurn={decisionsByTurn} />
+
+                    <section className="mt-10">
+                        <h2 className="mb-4 text-lg font-semibold">Research metrics</h2>
+                        <MetricsDashboard timeline={timeline} byModel={byModel} />
+                    </section>
+                </>
             )}
         </main>
     )
