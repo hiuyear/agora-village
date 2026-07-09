@@ -5,7 +5,8 @@ import { requireCreator } from '@/lib/auth'
 // Always read fresh from the DB — never serve a cached snapshot.
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: NextRequest, {params}: {params: {id: string}}){
+export async function GET(request: NextRequest, props: {params: Promise<{id: string}>}) {
+    const params = await props.params;
     const {id} = params
 
     const {data, error} = await supabase.from('runs').select('id, created_at, name, status, config, current_turn').eq('id',id).maybeSingle()
@@ -21,7 +22,8 @@ export async function GET(request: NextRequest, {params}: {params: {id: string}}
     return NextResponse.json(data)
 }
 
-export async function DELETE(request: NextRequest, {params}: {params: {id:string}}) {
+export async function DELETE(request: NextRequest, props: {params: Promise<{id:string}>}) {
+    const params = await props.params;
     // postgres auto deletes child rows, so deleting from runs table => delete from turns table, etc
     const {id} = params
 

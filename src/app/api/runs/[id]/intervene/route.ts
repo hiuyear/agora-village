@@ -8,7 +8,8 @@ import { InterventionSchema } from '@/lib/simulation'
 // itself — the effect is applied by the NEXT advanceTurn (deferred-effect,
 // decision #17), keeping advanceTurn the single source of state transitions.
 // rmb that TURN # must be derived from supabase (not from API params)
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+    const params = await props.params;
     const { id } = params
 
     const authError = await requireCreator(request, id)

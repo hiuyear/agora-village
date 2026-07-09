@@ -3,7 +3,15 @@
     "allow": [
       "Bash(node -e \"console.log\\(require\\('workflow/package.json'\\).version\\)\")",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('next:',p.dependencies.next,'| react:',p.dependencies.react,'| react-dom:',p.dependencies['react-dom']\\); console.log\\('types react:', p.devDependencies['@types/react']\\)\")",
-      "Bash(npx --yes @next/codemod@latest next-async-request-api ./src)"
+      "Bash(npx --yes @next/codemod@latest next-async-request-api ./src)",
+      "Bash(npx --yes @next/codemod@latest next-async-request-api ./src --force)",
+      "Read(//Users/jaela/**)",
+      "Bash(mv /Users/jaela/package-lock.json /Users/jaela/package-lock.json.bak)",
+      "Bash(mv /Users/jaela/package.json /Users/jaela/package.json.bak)",
+      "Bash(mv /Users/jaela/package-lock.json.bak /Users/jaela/package-lock.json)",
+      "Bash(mv /Users/jaela/package.json.bak /Users/jaela/package.json)",
+      "Bash(npm view *)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const v=JSON.parse\\(d\\);console.log\\('16.1.x:',v.filter\\(x=>x.startsWith\\('16.1.'\\)\\).slice\\(-5\\).join\\(', '\\)\\);console.log\\('16.0.x:',v.filter\\(x=>x.startsWith\\('16.0.'\\)\\).slice\\(-4\\).join\\(', '\\)\\)}\\)\")"
     ]
   }
 }

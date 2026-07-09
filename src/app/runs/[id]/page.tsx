@@ -20,7 +20,8 @@ function statusColor(status: string): string {
     }
 }
 
-export default async function RunPage({ params }: { params: { id: string } }) {
+export default async function RunPage(props: { params: Promise<{ id: string }> }) {
+    const params = await props.params;
     const { id } = params
 
     // 1. the run itself (name, status, config)

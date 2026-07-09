@@ -1,7 +1,8 @@
 import { supabase } from '@/lib/supabase'
 import {NextRequest, NextResponse} from 'next/server'
 
-export async function GET(request: NextRequest, {params} : {params: {id: string}}){
+export async function GET(request: NextRequest, props: {params: Promise<{id: string}>}) {
+    const params = await props.params;
     const {id: runId} = params
     const {data, error} = await supabase
         .from('turns')

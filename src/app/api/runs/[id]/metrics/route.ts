@@ -5,7 +5,8 @@ import { supabase } from '@/lib/supabase'
 // Feeds the research dashboard. No auth: reads are public (only mutating routes
 // use requireCreator). Run-level numbers are aggregated ON READ (decision #18) —
 // no run_metrics table.
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+    const params = await props.params;
     const { id } = params
 
     // 1. TIMELINE — per-turn metrics we already stored in turns.metrics (Stage 3).
