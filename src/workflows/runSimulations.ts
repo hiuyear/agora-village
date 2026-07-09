@@ -1,4 +1,5 @@
 import { advanceTurn } from "@/lib/simulation";
+import { supabase } from "@/lib/supabase";
 
 // IMPORTANT: vercel time ouit at ~ 300s
 // advanceTurn (pure turn logic, in lib/) stays WDK-agnostic so /advance and
@@ -13,9 +14,21 @@ async function advanceTurnStep(runId: string) {
   return state
 }
 
-export async function runSimulationWorkflow(runId: string, turns: number) {
-    "use workflow";
-    for (let i = 0; i < turns; i++) {
-        await advanceTurnStep(runId)
+// status write = DB access = must be a step (workflow sandbox can't reach Supabase)
+async function setRunStatusStep(runId: string, status: "completed" | "error") {
+    "use step";
+    await supabase.from("runs").update({ status }).eq("id", runId);
   }
-}
+
+  export async function runSimulationWorkflow(runId: string, turns: number) {
+    "use workflow";
+    try {
+      for (let i = 0; i < turns; i++) {
+        await advanceTurnStep(runId);
+      }
+      await setRunStatusStep(runId, "completed");   // ALL turns ran to the end -> done
+    } catch (e) {
+      await setRunStatusStep(runId, "error"); // a step exhausted retries -> failed
+      throw e; // rethrow so WDK also marks the run failed
+    }
+  }
