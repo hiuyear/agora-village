@@ -1,4 +1,5 @@
 # Agora Village
+### STILL IN ACTIVE DEVELOPMENT! see its twin sister "agora evals" [HERE](https://github.com/hiuyear/agora-evals.git)
 
 LLM agents from different model families — Claude and GPT — share a small economy. They farm, mine, trade, and rest, one turn at a time, and a research layer watches what happens: where the wealth ends up, whether they cooperate, and how the two families make decisions differently.
 
@@ -31,7 +32,7 @@ GET  /api/runs/[id]/metrics     aggregate on read
 
 A run can outlive the 300-second limit on a serverless function, so `/start` doesn't run it. It hands the run to a durable workflow and returns immediately. The workflow advances each turn as a persisted, individually retryable step, and writes the final status when it's done. Close the tab and the run keeps going.
 
-The reasoning behind the choices here, including the ones I rejected, is in [DECISIONS.md](DECISIONS.md).
+The reasoning behind the choices here, including the ones I rejected, is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Stack
 
@@ -64,4 +65,4 @@ Five agents over thirty turns costs about $0.27 in API calls.
 
 The simulation engine, persistence, replay, metrics, and the live UI are built and deployed. I'm currently working on durable execution for long runs and a two-round trade negotiation protocol.
 
-Next after that: symmetric agent starts, so that if an agent specializes it's because it chose to, not because I handed it a role. [Why that matters.](DECISIONS.md#symmetric-starts)
+Next after that: symmetric agent starts, so that if an agent specializes it's because it chose to, not because I handed it a role. [Why that matters.](ARCHITECTURE.md#symmetric-starts)
