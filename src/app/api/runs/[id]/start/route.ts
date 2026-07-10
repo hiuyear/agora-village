@@ -14,15 +14,23 @@ export async function POST(request: NextRequest, props: {params: Promise<{id: st
 
     const body = await request.json()
 
-    // retrieve status & config from supabase using id
+    // retrieve status & config from supabase using id.
+    // maybeSingle() (not single()) so a missing run comes back as data:null/error:null
+    // rather than an error — lets us distinguish "not found" from "DB failed" (decision #13).
     const { data: run, error } = await supabase
         .from('runs')
         .select('status, config')
         .eq('id', id)
-        .single()
+        .maybeSingle()
 
-    if (error || !run){
-        return NextResponse.json({error: error.message}, { status: 500})
+    // real DB failure
+    if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    // run simply doesn't exist -> 404, not 500 (and never deref a null error)
+    if (!run) {
+        return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
     // double-start guartd - prevent from running when already running
