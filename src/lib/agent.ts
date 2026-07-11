@@ -37,7 +37,7 @@ export type Decision = z.infer<typeof DecisionSchema>
 
 // Models sometimes wrap JSON in a markdown code fence (```json ... ```)
 // despite being told not to. Strip it before parsing.
-function stripCodeFence(raw: string): string {
+export function stripCodeFence(raw: string): string {
     const text = raw.trim()
     if (!text.startsWith("```")) return text
     return text
