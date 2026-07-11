@@ -63,6 +63,6 @@ Five agents over thirty turns costs about $0.27 in API calls.
 
 ## Where it's at
 
-The simulation engine, persistence, replay, metrics, and the live UI are built and deployed. I'm currently working on durable execution for long runs and a two-round trade negotiation protocol.
+The simulation engine, persistence, replay, metrics, the live UI, and durable execution for long runs are built and deployed. I'm currently working on a two-round trade negotiation protocol.
 
 Next after that: symmetric agent starts, so that if an agent specializes it's because it chose to, not because I handed it a role. [Why that matters.](ARCHITECTURE.md#symmetric-starts)

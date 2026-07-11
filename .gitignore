@@ -44,3 +44,5 @@ learn.md
 docs/
 .env*
 /.swc
+
+.claude/
