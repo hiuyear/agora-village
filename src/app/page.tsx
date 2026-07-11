@@ -25,7 +25,7 @@ type RunRow = {
 export default async function Home() {
     // Explicit columns only — never select('*') on a table that holds
     // creator_token (bcrypt hash). Same rule enforced across the API routes.
-    const { data: runs } = await supabase
+    const { data: runs, error } = await supabase
         .from('runs')
         .select('id, name, status, created_at, config')
         .order('created_at', { ascending: false })
@@ -42,7 +42,11 @@ export default async function Home() {
                 </p>
             </header>
 
-            {rows.length === 0 ? (
+            {error ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    Couldn’t load runs. The database may be unreachable — try again shortly.
+                </p>
+            ) : rows.length === 0 ? (
                 <p className="text-gray-500">
                     No runs yet. Create one via <code>POST /api/runs</code>, then start it.
                 </p>

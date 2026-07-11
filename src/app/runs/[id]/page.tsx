@@ -6,6 +6,7 @@ import LiveFeed from './LiveFeed'
 import InterventionControls from './InterventionControls'
 import MetricsDashboard from './MetricsDashboard'
 import type { TimelinePoint } from './MetricsDashboard'
+import StartingState from './StartingState'
 
 // Always render fresh — this is live simulation data, never a cached snapshot.
 export const dynamic = 'force-dynamic'
@@ -97,9 +98,16 @@ export default async function RunPage(props: { params: Promise<{ id: string }> }
                 </p>
             </header>
 
-            {/* no turns yet → nothing to replay */}
+            {/* no turns yet: distinguish "started, turn 1 still cooking" (live-poll
+                until it lands) from "genuinely never started" (static hint) */}
             {turnRows.length === 0 ? (
-                <p className="text-gray-500">No turns yet — this run hasn’t been started.</p>
+                run.status === 'running' || run.status === 'pending' ? (
+                    <StartingState status={run.status} />
+                ) : run.status === 'error' ? (
+                    <p className="text-red-600">This run errored before producing any turns.</p>
+                ) : (
+                    <p className="text-gray-500">No turns yet — this run hasn’t been started.</p>
+                )
             ) : (
                 <>
                     {/* Live view: seeded with the newest turn's state, then kept
