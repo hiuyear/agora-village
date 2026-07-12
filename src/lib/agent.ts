@@ -35,6 +35,13 @@ export const DecisionSchema = z.object({
 
 export type Decision = z.infer<typeof DecisionSchema>
 
+export const AcceptanceSchema = z.object({
+    accept: z.string().nullable(), // agent name if accept (null = reject)
+    reasoning: z.string() // reason for accepting/rejecting trade offer
+})
+
+export type Acceptance = z.infer<typeof AcceptanceSchema>
+
 // Models sometimes wrap JSON in a markdown code fence (```json ... ```)
 // despite being told not to. Strip it before parsing.
 export function stripCodeFence(raw: string): string {
