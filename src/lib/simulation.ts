@@ -32,6 +32,11 @@ export const InterventionSchema = z.object({
 
 export type InterventionEvent = z.infer<typeof InterventionSchema>
 
+export type Offer = {
+    from: string      // the proposer's name
+    offer: { resource: "food" | "ore" | "gold"; amount: number }    // what the proposer GIVES
+    request: { resource: "food" | "ore" | "gold"; amount: number }  // what the proposer WANTS back
+}
 
 export function buildPrompt(agent: AgentConfig, state: SimState): string {
     const turn = state.turn
@@ -54,6 +59,42 @@ export function buildPrompt(agent: AgentConfig, state: SimState): string {
     Other agents:
     ${others}
     Decide your action.`
+}
+
+// buildOfferPrompt targetted output:
+// Turn 4. You are Rex, a cautious miner.
+// Your inventory: 8 food, 2 ore, 6 gold.
+// You have received trade offers:
+// - Mira (has 2 food, 0 ore, 10 gold) gives you 5 gold and wants 3 ore in return.
+// - Juno (has 9 food, 1 ore, 3 gold) gives you 4 food and wants 2 ore in return.
+// Your own plan this turn was: MINE.
+// Accept one offer by naming the proposer, or keep your own plan.
+
+export function buildOfferPrompt(
+    target: AgentConfig,
+    offers: Offer[],
+    originalDecision: Decision,
+    state: SimState
+): string {
+    const turn = state.turn
+    const { name: reviewer, personality, specialty } = target
+    const reviewerInventory = state.agents[reviewer]
+    
+    const offerLines = offers
+    .map((o) => {
+        const inv = state.agents[o.from]
+        return `- ${o.from} (has ${inv.food} food, ${inv.ore} ore, ${inv.gold} gold) gives you ${o.offer.amount} ${o.offer.resource} and wants ${o.request.amount} ${o.request.resource} in return.`
+    })
+    .join("\n")
+
+
+    return `Turn ${turn}. You are ${reviewer}, a ${personality} ${specialty}.
+    Your inventory: ${reviewerInventory.food} food, ${reviewerInventory.ore} ore, ${reviewerInventory.gold} gold.
+    You have received trade offers:
+    ${offerLines}
+    Your own plan this turn was: ${originalDecision.action}.
+    Accept one offer by naming the proposer, or keep your own plan.`
+        
 }
 
 export function resolveDecisions(
