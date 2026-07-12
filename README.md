@@ -1,6 +1,8 @@
 # Agora Village
 ### STILL IN ACTIVE DEVELOPMENT! see its twin sister "agora evals" [HERE](https://github.com/hiuyear/agora-evals.git)
 
+https://github.com/user-attachments/assets/aa1eee0a-3656-4f32-8456-3babe01fb49b
+
 LLM agents from different model families — Claude and GPT — share a small economy. They farm, mine, trade, and rest, one turn at a time, and a research layer watches what happens: where the wealth ends up, whether they cooperate, and how the two families make decisions differently.
 
 **Live:** [agora-village.vercel.app](https://agora-village.vercel.app)
