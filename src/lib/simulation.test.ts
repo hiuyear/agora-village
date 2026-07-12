@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { applyIntervention, resolveDecisions, SimState, InterventionEvent, AgentConfig } from "./simulation"
-import { Decision } from "./agent"
+import { applyIntervention, resolveDecisions, buildAgreedTrades, SimState, InterventionEvent, AgentConfig, AgreedTrade, Offer } from "./simulation"
+import { Decision, Acceptance } from "./agent"
 
 describe("applyIntervention", () => {
   it("drought halves food (rounded down), leaves ore and gold untouched", () => {
@@ -89,7 +89,7 @@ describe("resolveDecisions", () => {
           { name: "otherAgent", model: "x", personality: "x", specialty: "miner" }
       ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next, outcomes } = resolveDecisions(state, decisions, config, [])
 
       expect(next.agents.farmerAgent.food).toBe(14) // 10 - 1 + 5
       expect(next.agents.otherAgent.food).toBe(12)  // 10 - 1 + 3
@@ -114,7 +114,7 @@ describe("resolveDecisions", () => {
           { name: "otherAgent", model: "x", personality: "x", specialty: "farmer" }
       ]
 
-      const { next } = resolveDecisions(state, decisions, config)
+      const { next } = resolveDecisions(state, decisions, config, [])
 
       expect(next.agents.minerAgent.ore).toBe(8)  // 5 + 3
       expect(next.agents.otherAgent.ore).toBe(7)  // 5 + 2
@@ -133,7 +133,7 @@ describe("resolveDecisions", () => {
           { name: "agent1", model: "x", personality: "x", specialty: "farmer" }
       ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next, outcomes } = resolveDecisions(state, decisions, config, [])
 
       expect(next.agents.agent1.gold).toBe(4)
       expect(next.agents.agent1.food).toBe(9)
@@ -159,7 +159,7 @@ describe("resolveDecisions", () => {
           { name: "agent2", model: "x", personality: "x", specialty: "farmer" }
       ]
 
-      const { next } = resolveDecisions(state, decisions, config)
+      const { next } = resolveDecisions(state, decisions, config, [])
 
       expect(next.agents.agent1.food).toBe(4)
       expect(next.agents.agent2.food).toBe(0) // floor guard, not -1
@@ -183,15 +183,17 @@ describe("resolveDecisions", () => {
           { name: "agent2", model: "x", personality: "x", specialty: "farmer" }
       ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next, outcomes } = resolveDecisions(state, decisions, config, [])
 
       expect(outcomes.agent2).toBe("no_trade")
       expect(next.agents.agent2.food).toBe(4) // decay loop covers all agents, not just deciders
     })
   })
 
+  // Round 2 established consent; resolveDecisions just EXECUTES the agreedTrades it's
+  // handed (no more mirror-matching). The matching/locking logic now lives in advanceTurn.
   describe("trades", () => {
-    it("executes a mirrored trade and marks both agents 'traded'", () => {
+    it("executes an agreed trade and marks both agents 'traded'", () => {
       const state: SimState = {
           turn: 0,
           agents: {
@@ -199,32 +201,32 @@ describe("resolveDecisions", () => {
               agentB: { food: 10, ore: 10, gold: 0 }
           }
       }
+      // solo actions are irrelevant once locked into a trade
       const decisions: Record<string, Decision> = {
-          agentA: {
-              action: "TRADE", reasoning: 'xyz',
-              trade: { with: "agentB", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
-          },
-          agentB: {
-              action: "TRADE", reasoning: 'xyz',
-              trade: { with: "agentA", offer: { resource: "ore", amount: 3 }, request: { resource: "gold", amount: 5 } }
-          }
+          agentA: { action: "REST", reasoning: 'locked' },
+          agentB: { action: "REST", reasoning: 'locked' }
       }
       const config: AgentConfig[] = [
           { name: "agentA", model: "x", personality: "x", specialty: "farmer" },
           { name: "agentB", model: "x", personality: "x", specialty: "farmer" }
       ]
+      const agreedTrades: AgreedTrade[] = [
+          { proposer: "agentA", accepter: "agentB",
+            offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
+      ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next, outcomes } = resolveDecisions(state, decisions, config, agreedTrades)
 
-      expect(next.agents.agentA.gold).toBe(5)  // 10 - 5
-      expect(next.agents.agentA.ore).toBe(3)   // 0 + 3
-      expect(next.agents.agentB.ore).toBe(7)   // 10 - 3
-      expect(next.agents.agentB.gold).toBe(5)  // 0 + 5
+      expect(next.agents.agentA.gold).toBe(5)  // 10 - 5 (gave gold)
+      expect(next.agents.agentA.ore).toBe(3)   // 0 + 3  (got ore)
+      expect(next.agents.agentB.ore).toBe(7)   // 10 - 3 (gave ore)
+      expect(next.agents.agentB.gold).toBe(5)  // 0 + 5  (got gold)
       expect(outcomes.agentA).toBe("traded")
       expect(outcomes.agentB).toBe("traded")
     })
 
-    it("does not execute a one-sided trade proposal (no mirror match)", () => {
+    it("locks trade participants out of their solo action", () => {
+      // both agents have a round-1 FARM, but they're in a trade — the FARM must NOT apply
       const state: SimState = {
           turn: 0,
           agents: {
@@ -233,25 +235,26 @@ describe("resolveDecisions", () => {
           }
       }
       const decisions: Record<string, Decision> = {
-          agentA: {
-              action: "TRADE", reasoning: 'xyz',
-              trade: { with: "agentB", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
-          },
-          agentB: { action: "FARM", reasoning: 'xyz' }
+          agentA: { action: "FARM", reasoning: 'ignored - locked' },
+          agentB: { action: "FARM", reasoning: 'ignored - locked' }
       }
       const config: AgentConfig[] = [
           { name: "agentA", model: "x", personality: "x", specialty: "farmer" },
           { name: "agentB", model: "x", personality: "x", specialty: "farmer" }
       ]
+      const agreedTrades: AgreedTrade[] = [
+          { proposer: "agentA", accepter: "agentB",
+            offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
+      ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next } = resolveDecisions(state, decisions, config, agreedTrades)
 
-      expect(next.agents.agentA.gold).toBe(10)
-      expect(next.agents.agentA.ore).toBe(0)
-      expect(outcomes.agentA).toBe("no_trade")
+      // food only decayed (10 - 1); no +5 farmer bonus, because both are locked
+      expect(next.agents.agentA.food).toBe(9)
+      expect(next.agents.agentB.food).toBe(9)
     })
 
-    it("does not execute a trade the proposer can't afford", () => {
+    it("does not execute an agreed trade the proposer can't afford", () => {
       const state: SimState = {
           turn: 0,
           agents: {
@@ -260,26 +263,119 @@ describe("resolveDecisions", () => {
           }
       }
       const decisions: Record<string, Decision> = {
-          agentA: {
-              action: "TRADE", reasoning: 'xyz',
-              trade: { with: "agentB", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
-          },
-          agentB: {
-              action: "TRADE", reasoning: 'xyz',
-              trade: { with: "agentA", offer: { resource: "ore", amount: 3 }, request: { resource: "gold", amount: 5 } }
-          }
+          agentA: { action: "REST", reasoning: 'locked' },
+          agentB: { action: "REST", reasoning: 'locked' }
       }
       const config: AgentConfig[] = [
           { name: "agentA", model: "x", personality: "x", specialty: "farmer" },
           { name: "agentB", model: "x", personality: "x", specialty: "farmer" }
       ]
+      const agreedTrades: AgreedTrade[] = [
+          { proposer: "agentA", accepter: "agentB",
+            offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
+      ]
 
-      const { next, outcomes } = resolveDecisions(state, decisions, config)
+      const { next, outcomes } = resolveDecisions(state, decisions, config, agreedTrades)
 
-      expect(next.agents.agentA.gold).toBe(2)
+      expect(next.agents.agentA.gold).toBe(2)  // unchanged — trade skipped
       expect(next.agents.agentB.ore).toBe(10)
       expect(outcomes.agentA).toBe("no_trade")
       expect(outcomes.agentB).toBe("no_trade")
     })
+  })
+})
+
+// The round-2 locking logic (decision #7). Pure + deterministic — no LLM, no Supabase.
+describe("buildAgreedTrades", () => {
+  const goldForOre: Offer = {
+      from: "agentA",
+      offer: { resource: "gold", amount: 5 },
+      request: { resource: "ore", amount: 3 }
+  }
+
+  it("turns an accepted offer into one agreed trade", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "agentA", reasoning: "yes" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toEqual([
+        { proposer: "agentA", accepter: "agentB",
+          offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
+    ])
+  })
+
+  it("treats accept: null as a decline (no trade)", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: null, reasoning: "no thanks" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toEqual([])
+  })
+
+  it("treats an accept naming a non-offerer (hallucination) as a decline", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "ghost", reasoning: "who?" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toEqual([])
+  })
+
+  it("picks the accepted proposer's terms when a target has multiple offers", () => {
+    const offersByTarget: Record<string, Offer[]> = {
+        rex: [
+            { from: "mira", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } },
+            { from: "juno", offer: { resource: "food", amount: 4 }, request: { resource: "ore", amount: 2 } }
+        ]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "rex", acceptance: { accept: "juno", reasoning: "better deal" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toEqual([
+        { proposer: "juno", accepter: "rex",
+          offer: { resource: "food", amount: 4 }, request: { resource: "ore", amount: 2 } }
+    ])
+  })
+
+  it("locks a proposer into one trade, resolving conflicts alphabetically by target", () => {
+    // proposer P offered to BOTH agentA and agentB; both accept P.
+    // P can only be in one trade → alphabetical order means agentA wins,
+    // even though agentB's acceptance appears FIRST in the input array.
+    const offersByTarget: Record<string, Offer[]> = {
+        agentA: [{ from: "P", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }],
+        agentB: [{ from: "P", offer: { resource: "gold", amount: 2 }, request: { resource: "food", amount: 1 } }]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "P", reasoning: "" } },
+        { target: "agentA", acceptance: { accept: "P", reasoning: "" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({
+        proposer: "P", accepter: "agentA",
+        offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 }
+    })
+  })
+
+  it("keeps independent (non-conflicting) trades both intact", () => {
+    const offersByTarget: Record<string, Offer[]> = {
+        agentB: [{ from: "agentA", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }],
+        agentD: [{ from: "agentC", offer: { resource: "food", amount: 2 }, request: { resource: "gold", amount: 1 } }]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "agentA", reasoning: "" } },
+        { target: "agentD", acceptance: { accept: "agentC", reasoning: "" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toHaveLength(2)
   })
 })

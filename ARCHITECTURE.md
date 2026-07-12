@@ -86,13 +86,13 @@ While debugging this I anchored on a warning instead of the actual error, decide
 
 ## Trades are a two-round negotiation
 
-**planned**
+**done**
 
 The original rule needed two agents to independently propose exactly mirrored trades — same partner, same resource pair, same amounts — in the same blind parallel round. The odds of that are terrible, so trades would basically never fire and the whole trade path would be dead code I couldn't test.
 
 The mistake is conceptual. Real trading is asynchronous: you propose, then someone responds. The original design forced it to be simultaneous.
 
-So a turn now resolves in two rounds. Everyone decides blind in round one. In round two, any agent that got a trade offer gets a second LLM call showing all offers aimed at it, and either accepts one or keeps its original plan.
+So a turn now resolves in two rounds. Everyone decides blind in round one. In round two, any agent that got a trade offer gets a second LLM call showing all offers aimed at it — each with the proposer's current inventory, since round two is a fresh call with no memory of round one and I didn't want the agent deciding more blind than it had in round one — and it either accepts one or keeps its original plan.
 
 I considered a standing offer book across turns, which is closer to how markets actually work, but the proposer wastes its turn waiting and I'd have to persist offer state. I also considered letting both agents just name each other with the proposer's terms winning, but then the receiving agent has no say in terms it's bound by.
 

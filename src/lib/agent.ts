@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import OpenAI from "openai"
 import {z} from 'zod'
 
-const systemPrompt = `You are an agent in an economic village simulation.
+const actionSystemPrompt = `You are an agent in an economic village simulation.
 Each turn you choose one action. Available actions:
 - FARM: gain food (farmers get a bonus)
 - MINE: gain ore (miners get a bonus)
@@ -16,6 +16,17 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
   "reasoning": "<one sentence>"
 }
 Only include "trade" if action is TRADE.`
+
+const acceptanceSystemPrompt = `You are an agent in an economic village simulation.
+Other agents have offered to trade with you. Accept one offer, or keep your own plan.
+
+Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
+{
+  "accept": "<proposer name>" | null,
+  "reasoning": "<one sentence>"
+}
+Set "accept" to the name of the proposer whose offer you accept, or null to decline all offers and keep your plan.`
+
 
 export const DecisionSchema = z.object({
     action: z.enum(["FARM", "MINE", "TRADE", "REST"]),
@@ -35,6 +46,13 @@ export const DecisionSchema = z.object({
 
 export type Decision = z.infer<typeof DecisionSchema>
 
+export const AcceptanceSchema = z.object({
+    accept: z.string().nullable(), // agent name if accept (null = reject)
+    reasoning: z.string() // reason for accepting/rejecting trade offer
+})
+
+export type Acceptance = z.infer<typeof AcceptanceSchema>
+
 // Models sometimes wrap JSON in a markdown code fence (```json ... ```)
 // despite being told not to. Strip it before parsing.
 export function stripCodeFence(raw: string): string {
@@ -46,7 +64,12 @@ export function stripCodeFence(raw: string): string {
         .trim()
 }
 
-export async function callAgent(model: string, prompt: string): Promise<Decision> {
+async function callLLM(model: string, systemPrompt: string, userPrompt: string): Promise<string> {
+    // the exact Anthropic/OpenAI branch you already have, but:
+    //   - `system:` / the system message use the systemPrompt PARAMETER (not a module const)
+    //   - the user content uses userPrompt
+    //   - end with:  return stripCodeFence(text)
+
     let text: string
 
     if (model.startsWith("claude-")) {
@@ -55,7 +78,7 @@ export async function callAgent(model: string, prompt: string): Promise<Decision
             model: model,
             max_tokens: 300,
             system: systemPrompt,
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: userPrompt }],
         })
 
         const response = msg.content[0]
@@ -63,6 +86,7 @@ export async function callAgent(model: string, prompt: string): Promise<Decision
             throw new Error(`Unexpected response type: ${response.type}`)
         }
         text = response.text
+
     } else if (model.startsWith("gpt-")) {
         const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
         const completion = await client.chat.completions.create({
@@ -71,7 +95,7 @@ export async function callAgent(model: string, prompt: string): Promise<Decision
             response_format: { type: "json_object" },
             messages: [
                 { role: "system", content: systemPrompt },
-                { role: "user", content: prompt },
+                { role: "user", content: userPrompt },
             ],
         })
 
@@ -84,5 +108,15 @@ export async function callAgent(model: string, prompt: string): Promise<Decision
         throw new Error(`Unknown model provider: ${model}`)
     }
 
-    return DecisionSchema.parse(JSON.parse(stripCodeFence(text)))
+    return stripCodeFence(text)
+}   
+
+export async function callAgent(model: string, prompt: string): Promise<Decision> {
+    const text = await callLLM(model, actionSystemPrompt, prompt)
+    return DecisionSchema.parse(JSON.parse(text))
+}
+
+export async function callAcceptance(model: string, prompt: string): Promise<Acceptance> {
+    const text = await callLLM(model, acceptanceSystemPrompt, prompt)
+    return AcceptanceSchema.parse(JSON.parse(text))
 }

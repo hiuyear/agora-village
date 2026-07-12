@@ -1,7 +1,8 @@
 import { z } from "zod"
-import { Decision, callAgent } from "./agent"
+import { Decision, Acceptance, callAgent, callAcceptance } from "./agent"
 import { computeMetrics } from "./metrics"
 import { supabase } from '@/lib/supabase'
+
 
 export type AgentConfig = {
     name: string,
@@ -32,6 +33,18 @@ export const InterventionSchema = z.object({
 
 export type InterventionEvent = z.infer<typeof InterventionSchema>
 
+export type Offer = {
+    from: string      // the proposer's name
+    offer: { resource: "food" | "ore" | "gold"; amount: number }    // what the proposer GIVES
+    request: { resource: "food" | "ore" | "gold"; amount: number }  // what the proposer WANTS back
+}
+
+export type AgreedTrade = {
+    proposer: string   // made the offer in round 1
+    accepter: string   // said yes in round 2
+    offer: { resource: "food" | "ore" | "gold"; amount: number }    // proposer GIVES, accepter receives
+    request: { resource: "food" | "ore" | "gold"; amount: number }  // proposer RECEIVES, accepter gives
+}
 
 export function buildPrompt(agent: AgentConfig, state: SimState): string {
     const turn = state.turn
@@ -56,11 +69,75 @@ export function buildPrompt(agent: AgentConfig, state: SimState): string {
     Decide your action.`
 }
 
+// buildOfferPrompt targetted output:
+// Turn 4. You are Rex, a cautious miner.
+// Your inventory: 8 food, 2 ore, 6 gold.
+// You have received trade offers:
+// - Mira (has 2 food, 0 ore, 10 gold) gives you 5 gold and wants 3 ore in return.
+// - Juno (has 9 food, 1 ore, 3 gold) gives you 4 food and wants 2 ore in return.
+// Your own plan this turn was: MINE.
+// Accept one offer by naming the proposer, or keep your own plan.
+
+export function buildOfferPrompt(
+    target: AgentConfig,
+    offers: Offer[],
+    originalDecision: Decision,
+    state: SimState
+): string {
+    const turn = state.turn
+    const { name: reviewer, personality, specialty } = target
+    const reviewerInventory = state.agents[reviewer]
+    
+    const offerLines = offers
+    .map((o) => {
+        const inv = state.agents[o.from]
+        return `- ${o.from} (has ${inv.food} food, ${inv.ore} ore, ${inv.gold} gold) gives you ${o.offer.amount} ${o.offer.resource} and wants ${o.request.amount} ${o.request.resource} in return.`
+    })
+    .join("\n")
+
+
+    return `Turn ${turn}. You are ${reviewer}, a ${personality} ${specialty}.
+    Your inventory: ${reviewerInventory.food} food, ${reviewerInventory.ore} ore, ${reviewerInventory.gold} gold.
+    You have received trade offers:
+    ${offerLines}
+    Your own plan this turn was: ${originalDecision.action}.
+    Accept one offer by naming the proposer, or keep your own plan.`
+        
+}
+
+// Turn round-2 acceptances into the trades that will actually execute, applying the
+// locking rules (decision #7). a null or unrecognized `accept` is a decline.
+// extracted from advanceTurn into a pure helper for the purpose of unit testing
+export function buildAgreedTrades(
+    offersByTarget: Record<string, Offer[]>,
+    acceptances: { target: string; acceptance: Acceptance }[]
+): AgreedTrade[] {
+    const agreedTrades: AgreedTrade[] = []
+    const locked = new Set<string>()
+    // alphabetical by target → deterministic which trade wins when agents conflict
+    const ordered = [...acceptances].sort((a, b) => a.target.localeCompare(b.target))
+    for (const { target, acceptance } of ordered) {
+        const chosen = acceptance.accept
+        if (chosen === null) continue                            // declined all
+        const match = offersByTarget[target]?.find((o) => o.from === chosen)
+        if (!match) continue                                     // accepted a name that never offered → decline
+        if (locked.has(target) || locked.has(chosen)) continue   // one trade per agent per turn
+        agreedTrades.push({ proposer: chosen, accepter: target, offer: match.offer, request: match.request })
+        locked.add(target)
+        locked.add(chosen)
+    }
+    return agreedTrades
+}
+
 export function resolveDecisions(
     state: SimState,
     decisions: Record<string, Decision>,
-    config: AgentConfig[]
+    config: AgentConfig[],
+    agreedTrades: AgreedTrade[]
     ): { next: SimState; outcomes: Record<string, string> } { // outcomes -> {agentA, action}
+
+    // action loop skips all agents who's in an agreed trade
+    const locked = new Set(agreedTrades.flatMap((t) => [t.proposer, t.accepter]))
 
     const next: SimState = {
     turn: state.turn + 1,
@@ -86,6 +163,10 @@ export function resolveDecisions(
     const configByName = Object.fromEntries(config.map((c) => [c.name, c]))
 
     for (const [name, decision] of Object.entries(decisions)){
+
+        //locked agent does no FARM/REST/MINE
+        if (locked.has(name)) continue
+
         const inv = next.agents[name]
         const specialty = configByName[name].specialty 
 
@@ -104,49 +185,25 @@ export function resolveDecisions(
         }
     }
 
-    // resolve trades — MVP: both agents must independently propose the mirror trade.
-    // (Known weak: relies on coincidence. Redesign lives on branch `negotiating-trade-offers`.)
-    const trades = Object.entries(decisions).filter(
-        ([, d]) => d.action === "TRADE" && d.trade
-    )
+    // execute the round-2 agreed trades. consent already came from the acceptance
+    // round, so there's no matching to do (that's why the old mirror search is gone);
+    // we just check affordability and swap
+    for (const t of agreedTrades) {
+        const proposerInv = next.agents[t.proposer]
+        const accepterInv = next.agents[t.accepter]
 
-    for (const [nameA, decA] of trades) {
-        const tA = decA.trade!
+        // affordability: skip if either side can't cover what it owes
+        if (proposerInv[t.offer.resource] < t.offer.amount) continue
+        if (accepterInv[t.request.resource] < t.request.amount) continue
 
-        // find a partner whose trade is the exact mirror of A's
-        const partner = trades.find(([nameB, decB]) => {
-            const tB = decB.trade!
-            return (
-                nameB === tA.with &&
-                tB.with === nameA &&
-                tB.offer.resource === tA.request.resource &&
-                tB.offer.amount === tA.request.amount &&
-                tB.request.resource === tA.offer.resource &&
-                tB.request.amount === tA.offer.amount
-            )
-        })
-        if (!partner) continue
+        // swap: proposer gives `offer` and receives `request`; accepter is the mirror
+        proposerInv[t.offer.resource] -= t.offer.amount
+        proposerInv[t.request.resource] += t.request.amount
+        accepterInv[t.request.resource] -= t.request.amount
+        accepterInv[t.offer.resource] += t.offer.amount
 
-        const [nameB] = partner
-        if (nameA > nameB) continue // execute each matched pair only once
-
-        const invA = next.agents[nameA]
-        const invB = next.agents[nameB]
-
-        // affordability — skip if either side can't cover what it offered
-        if (invA[tA.offer.resource] < tA.offer.amount) continue
-        if (invB[tA.request.resource] < tA.request.amount) continue
-
-        // execute the swap: A gives offer, gets request; B is the mirror
-        invA[tA.offer.resource] -= tA.offer.amount
-        invA[tA.request.resource] += tA.request.amount
-        invB[tA.request.resource] -= tA.request.amount
-        invB[tA.offer.resource] += tA.offer.amount
-
-        // both sides of the swap just traded — upgrade BOTH from "no_trade"
-        outcomes[nameA] = "traded"
-        outcomes[nameB] = "traded"
-
+        outcomes[t.proposer] = "traded"
+        outcomes[t.accepter] = "traded"
     }
 
     return { next, outcomes }
@@ -268,10 +325,53 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     // mapped shape: [[agent.name, agent.decision], [...]]
     // decisions shape: { agent.name: agent.decision, ..., }
     
+    // ROUND 2: negotiation (decision #7) 
+    const configByName = Object.fromEntries(config.agents.map((c) => [c.name, c]))
 
-    // 4. RESOLVE: resolveDecisions(state, decisions, configs) -> nextState
+    // (1+2) collect TRADE proposals, grouped by target agent.
+    const offersByTarget: Record<string, Offer[]> = {}
+    for (const [proposer, decision] of Object.entries(decisions)) {
+        if (decision.action !== "TRADE" || !decision.trade) continue
+        const target = decision.trade.with
+        // target must be a real, different agent (guard hallucinated / self targets)
+        if (!(target in decisions) || target === proposer) continue
+        // leftover now: trade requests with valid targets
+        offersByTarget[target] ??= []
+        offersByTarget[target].push({
+            from: proposer,
+            offer: decision.trade.offer,
+            request: decision.trade.request,
+        })
+    }
 
-    const { next: nextState, outcomes } = resolveDecisions(workingState, decisions, config.agents)
+    // (3) round 2: one acceptance call per TARGETED agent, in parallel
+    const acceptanceResults = await Promise.all(
+        Object.entries(offersByTarget).map(async ([target, offers]) => {
+            const acceptance = await callAcceptance(
+                configByName[target].model,
+                buildOfferPrompt(configByName[target], offers, decisions[target], workingState)
+            )
+            return { target, acceptance }
+        })
+    )
+
+    // (4) turn acceptances into agreedTrades, with locking (extracted + unit-tested)
+    const agreedTrades = buildAgreedTrades(offersByTarget, acceptanceResults)
+
+    // (5) fallback: any proposer whose offer was NOT accepted rests this turn
+    // Accepters need no downgrade — resolveDecisions skips locked agents already.
+    const tradedProposers = new Set(agreedTrades.map((t) => t.proposer))
+    const allProposers = Object.values(offersByTarget)
+        .flat()
+        .map((o) => o.from)
+    for (const proposer of allProposers) {
+        if (tradedProposers.has(proposer)) continue
+        decisions[proposer] = { action: "REST", reasoning: "trade offer declined" }
+    }
+
+    // 4. RESOLVE: resolveDecisions(state, decisions, configs, agreedTrades) -> nextState
+
+    const { next: nextState, outcomes } = resolveDecisions(workingState, decisions, config.agents, agreedTrades)
 
     // 5. WRITE:   save nextState (turns table) + each decision (decisions table)
 
