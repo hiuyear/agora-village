@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { Decision, callAgent, callAcceptance } from "./agent"
+import { Decision, Acceptance, callAgent, callAcceptance } from "./agent"
 import { computeMetrics } from "./metrics"
 import { supabase } from '@/lib/supabase'
 
@@ -103,6 +103,30 @@ export function buildOfferPrompt(
     Your own plan this turn was: ${originalDecision.action}.
     Accept one offer by naming the proposer, or keep your own plan.`
         
+}
+
+// Turn round-2 acceptances into the trades that will actually execute, applying the
+// locking rules (decision #7). a null or unrecognized `accept` is a decline.
+// extracted from advanceTurn into a pure helper for the purpose of unit testing
+export function buildAgreedTrades(
+    offersByTarget: Record<string, Offer[]>,
+    acceptances: { target: string; acceptance: Acceptance }[]
+): AgreedTrade[] {
+    const agreedTrades: AgreedTrade[] = []
+    const locked = new Set<string>()
+    // alphabetical by target → deterministic which trade wins when agents conflict
+    const ordered = [...acceptances].sort((a, b) => a.target.localeCompare(b.target))
+    for (const { target, acceptance } of ordered) {
+        const chosen = acceptance.accept
+        if (chosen === null) continue                            // declined all
+        const match = offersByTarget[target]?.find((o) => o.from === chosen)
+        if (!match) continue                                     // accepted a name that never offered → decline
+        if (locked.has(target) || locked.has(chosen)) continue   // one trade per agent per turn
+        agreedTrades.push({ proposer: chosen, accepter: target, offer: match.offer, request: match.request })
+        locked.add(target)
+        locked.add(chosen)
+    }
+    return agreedTrades
 }
 
 export function resolveDecisions(
@@ -331,21 +355,8 @@ export async function advanceTurn(runId: string): Promise<SimState> {
         })
     )
 
-    // (4) turn acceptances into agreedTrades, with LOCKING
-    const agreedTrades: AgreedTrade[] = []
-    const locked = new Set<string>()
-    // deterministic order so tests are stable. alphabetical by target
-    const ordered = [...acceptanceResults].sort((a, b) => a.target.localeCompare(b.target))
-    for (const { target, acceptance } of ordered) {
-        const chosen = acceptance.accept
-        if (chosen === null) continue                                  // declined all
-        const match = offersByTarget[target].find((o) => o.from === chosen)
-        if (!match) continue                                           // hallucinated name → treat as decline
-        if (locked.has(target) || locked.has(chosen)) continue         // one trade per agent per turn
-        agreedTrades.push({ proposer: chosen, accepter: target, offer: match.offer, request: match.request })
-        locked.add(target)
-        locked.add(chosen)
-    }
+    // (4) turn acceptances into agreedTrades, with locking (extracted + unit-tested)
+    const agreedTrades = buildAgreedTrades(offersByTarget, acceptanceResults)
 
     // (5) fallback: any proposer whose offer was NOT accepted rests this turn
     // Accepters need no downgrade — resolveDecisions skips locked agents already.
