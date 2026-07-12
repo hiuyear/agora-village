@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { applyIntervention, resolveDecisions, SimState, InterventionEvent, AgentConfig, AgreedTrade } from "./simulation"
-import { Decision } from "./agent"
+import { applyIntervention, resolveDecisions, buildAgreedTrades, SimState, InterventionEvent, AgentConfig, AgreedTrade, Offer } from "./simulation"
+import { Decision, Acceptance } from "./agent"
 
 describe("applyIntervention", () => {
   it("drought halves food (rounded down), leaves ore and gold untouched", () => {
@@ -282,5 +282,100 @@ describe("resolveDecisions", () => {
       expect(outcomes.agentA).toBe("no_trade")
       expect(outcomes.agentB).toBe("no_trade")
     })
+  })
+})
+
+// The round-2 locking logic (decision #7). Pure + deterministic — no LLM, no Supabase.
+describe("buildAgreedTrades", () => {
+  const goldForOre: Offer = {
+      from: "agentA",
+      offer: { resource: "gold", amount: 5 },
+      request: { resource: "ore", amount: 3 }
+  }
+
+  it("turns an accepted offer into one agreed trade", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "agentA", reasoning: "yes" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toEqual([
+        { proposer: "agentA", accepter: "agentB",
+          offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }
+    ])
+  })
+
+  it("treats accept: null as a decline (no trade)", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: null, reasoning: "no thanks" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toEqual([])
+  })
+
+  it("treats an accept naming a non-offerer (hallucination) as a decline", () => {
+    const offersByTarget: Record<string, Offer[]> = { agentB: [goldForOre] }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "ghost", reasoning: "who?" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toEqual([])
+  })
+
+  it("picks the accepted proposer's terms when a target has multiple offers", () => {
+    const offersByTarget: Record<string, Offer[]> = {
+        rex: [
+            { from: "mira", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } },
+            { from: "juno", offer: { resource: "food", amount: 4 }, request: { resource: "ore", amount: 2 } }
+        ]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "rex", acceptance: { accept: "juno", reasoning: "better deal" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toEqual([
+        { proposer: "juno", accepter: "rex",
+          offer: { resource: "food", amount: 4 }, request: { resource: "ore", amount: 2 } }
+    ])
+  })
+
+  it("locks a proposer into one trade, resolving conflicts alphabetically by target", () => {
+    // proposer P offered to BOTH agentA and agentB; both accept P.
+    // P can only be in one trade → alphabetical order means agentA wins,
+    // even though agentB's acceptance appears FIRST in the input array.
+    const offersByTarget: Record<string, Offer[]> = {
+        agentA: [{ from: "P", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }],
+        agentB: [{ from: "P", offer: { resource: "gold", amount: 2 }, request: { resource: "food", amount: 1 } }]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "P", reasoning: "" } },
+        { target: "agentA", acceptance: { accept: "P", reasoning: "" } }
+    ]
+
+    const result = buildAgreedTrades(offersByTarget, acceptances)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({
+        proposer: "P", accepter: "agentA",
+        offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 }
+    })
+  })
+
+  it("keeps independent (non-conflicting) trades both intact", () => {
+    const offersByTarget: Record<string, Offer[]> = {
+        agentB: [{ from: "agentA", offer: { resource: "gold", amount: 5 }, request: { resource: "ore", amount: 3 } }],
+        agentD: [{ from: "agentC", offer: { resource: "food", amount: 2 }, request: { resource: "gold", amount: 1 } }]
+    }
+    const acceptances: { target: string; acceptance: Acceptance }[] = [
+        { target: "agentB", acceptance: { accept: "agentA", reasoning: "" } },
+        { target: "agentD", acceptance: { accept: "agentC", reasoning: "" } }
+    ]
+
+    expect(buildAgreedTrades(offersByTarget, acceptances)).toHaveLength(2)
   })
 })
