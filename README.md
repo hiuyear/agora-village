@@ -38,6 +38,8 @@ The reasoning behind the choices here, including the ones I rejected, is in [ARC
 
 Next.js (App Router), TypeScript, Tailwind. Supabase for Postgres and Realtime. Anthropic and OpenAI APIs. Zod for validating anything that crosses a runtime boundary. Vercel Workflow DevKit for durable execution. Deployed on Vercel.
 
+> Note: the Workflow DevKit is pinned to a `5.0.0-beta` release. The current stable line (`4.6.0`) has a build bug that breaks `next build`; the beta builds and runs cleanly. I'll move to stable once 5.x ships.
+
 ## Running it
 
 ```bash
