@@ -358,14 +358,17 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     // (4) turn acceptances into agreedTrades, with locking (extracted + unit-tested)
     const agreedTrades = buildAgreedTrades(offersByTarget, acceptanceResults)
 
-    // (5) fallback: any proposer whose offer was NOT accepted rests this turn
-    // Accepters need no downgrade — resolveDecisions skips locked agents already.
-    const tradedProposers = new Set(agreedTrades.map((t) => t.proposer))
+    // (5) fallback: any proposer whose offer was NOT accepted rests this turn.
+    // Skip anyone actually IN a trade — proposer OR accepter. An agent can be a
+    // declined proposer AND the accepter of someone else's offer; downgrading it to
+    // REST would mislabel a trading agent as resting in actionDist (state is fine
+    // either way, since resolveDecisions locks trade participants out of solo actions).
+    const inTrade = new Set(agreedTrades.flatMap((t) => [t.proposer, t.accepter]))
     const allProposers = Object.values(offersByTarget)
         .flat()
         .map((o) => o.from)
     for (const proposer of allProposers) {
-        if (tradedProposers.has(proposer)) continue
+        if (inTrade.has(proposer)) continue
         decisions[proposer] = { action: "REST", reasoning: "trade offer declined" }
     }
 
