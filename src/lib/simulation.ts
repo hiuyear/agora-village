@@ -372,6 +372,24 @@ export async function advanceTurn(runId: string): Promise<SimState> {
         decisions[proposer] = { action: "REST", reasoning: "trade offer declined" }
     }
 
+    // (6) rewrite each accepter's decision to the trade it actually took. Its round-1
+    // entry is the plan it ABANDONED to accept (e.g. MINE) — leaving that in `decisions`
+    // makes the decision row + actionDist report the abandoned plan, not the trade.
+    // This only fixes the RECORD: resolveDecisions runs off `agreedTrades` and skips
+    // locked agents, so it never read this field. offer/request are mirrored because a
+    // row describes what THAT agent gives/receives — the accepter gives what the
+    // proposer requested and receives what the proposer offered.
+    const acceptanceByTarget = Object.fromEntries(
+        acceptanceResults.map((a) => [a.target, a.acceptance])
+    )
+    for (const t of agreedTrades) {
+        decisions[t.accepter] = {
+            action: "TRADE",
+            trade: { with: t.proposer, offer: t.request, request: t.offer },
+            reasoning: acceptanceByTarget[t.accepter]?.reasoning ?? decisions[t.accepter].reasoning,
+        }
+    }
+
     // 4. RESOLVE: resolveDecisions(state, decisions, configs, agreedTrades) -> nextState
 
     const { next: nextState, outcomes } = resolveDecisions(workingState, decisions, config.agents, agreedTrades)
@@ -392,20 +410,27 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     if (turnError) throw new Error(turnError.message)
 
-    // 5.2. save to DECISIONS table
-    const decisionRows = results.map((r) => ({
-        run_id: runId,
-        turn_number: nextState.turn,
-        agent_id: r.agent.name,
-        agent_model: r.agent.model,
-        action: r.decision.action,
-        target: r.decision.trade?.with ?? null,
-        offer: r.decision.trade?.offer ?? null,
-        request: r.decision.trade?.request ?? null,
-        reasoning: r.decision.reasoning,
-        raw_response: null,
-        outcome: outcomes[r.agent.name],
-    }))
+    // 5.2. save to DECISIONS table.
+    // Read the FINAL committed decision (post-negotiation), not the round-1 intent in
+    // `results`: accepters were rewritten to their trade (6), declined proposers to REST.
+    // `results` is still the source of agent identity (name/model); the action comes
+    // from `decisions`. outcome (from resolveDecisions) says whether it executed.
+    const decisionRows = results.map((r) => {
+        const final = decisions[r.agent.name]
+        return {
+            run_id: runId,
+            turn_number: nextState.turn,
+            agent_id: r.agent.name,
+            agent_model: r.agent.model,
+            action: final.action,
+            target: final.trade?.with ?? null,
+            offer: final.trade?.offer ?? null,
+            request: final.trade?.request ?? null,
+            reasoning: final.reasoning,
+            raw_response: null,
+            outcome: outcomes[r.agent.name],
+        }
+    })
 
     // insert all decisions at once as an array into supabase
     const { error: decisionsError } = await supabase.from("decisions").insert(decisionRows)
