@@ -2,7 +2,40 @@
 
 Why this project is built the way it is. I started keeping these so I'd stop re-arguing the same choices with myself, and because "why did you use X" is easier to answer if you wrote it down at the time.
 
-Each entry says what I picked, what I turned down, and why. Status is one of **done**, **in progress**, **planned**, or **on hold**.
+Each entry says what I picked, what I turned down, and why. Status is one of **done**, **planned**, or **on hold**.
+
+There's a companion project, [Agora Village Evals](https://github.com/hiuyear/agora-evals), that treats this simulation as the system under test: it drives runs through the public API, captures every model call as OpenTelemetry traces, and reports calibrated behavioral metrics across the two model families. This repo is the sim; that one is the instrument that measures it.
+
+---
+
+## The system at a glance
+
+```mermaid
+flowchart TB
+    subgraph Browser
+        UI["Live village · replay · dashboard"]
+    end
+    subgraph Vercel["Next.js on Vercel"]
+        API["Route handlers"]
+        WF["Durable workflow"]
+    end
+    subgraph Supabase
+        PG[("Postgres<br/>runs · turns · decisions")]
+        RT["Realtime"]
+    end
+    LLM["Anthropic + OpenAI"]
+
+    UI -->|"POST /start"| API
+    API -->|"202, hand off"| WF
+    WF -->|"advance turn 1..N"| LLM
+    WF -->|"write each turn"| PG
+    PG --> RT
+    RT -->|"push turns, no polling"| UI
+    UI -->|"GET /metrics"| API
+    API -->|"aggregate on read"| PG
+```
+
+The request that starts a run doesn't run it. It hands the run to a durable workflow and returns; the workflow advances each turn as a persisted, individually retryable step and writes each one to Postgres, which Realtime pushes to any open browser. Everything below is why each of those pieces is the way it is.
 
 ---
 
@@ -58,7 +91,7 @@ One thing that took me a moment: agents *inside* a turn are independent, so they
 
 ## Long runs go in a durable workflow
 
-**in progress**
+**done**
 
 Vercel compiles each route into a serverless function with a 300-second ceiling. A turn makes several LLM calls, so a long run blows through that. The general version of the problem is that long work doesn't belong inside one HTTP request.
 
@@ -78,9 +111,11 @@ Fallout from this:
 - `/start` now returns before the run finishes, so writing `completed` / `error` moved out of the route and into the workflow. Whoever finishes the work writes the status.
 - The workflow sandbox can't reach Supabase, so even the status write has to be its own step.
 
-Current state: `next build` fails locally while collecting page data for a route WDK injects. Our workflow itself compiles (5 steps, 1 workflow). The evidence points at a build-environment dependency rather than a bug in the workflow, so I'm testing it on a preview deploy before falling back to batching.
+It runs. `/start` returns `202` in about two seconds while the turn work happens afterward inside the workflow's own route, and the completion status is written from within the workflow. Close the tab and the run finishes anyway. The full chain — `/start` → hand off → durable workflow → each turn as a step → status write — is verified locally and on Vercel.
 
-While debugging this I anchored on a warning instead of the actual error, decided it was a Next version mismatch, and did a whole 14→16 upgrade that wasn't the fix. The same fatal error had been there on 14 the entire time. The upgrade was worth keeping on its own merits, but that's not why I did it.
+Getting it to *build* was its own saga, and I'm keeping the two lessons because they cost real time. It fails on `workflow@4.6.0` — `next build` dies collecting page data for a route WDK injects, identically on Next 14 and 16, so it was never a Next version problem. Moving to `5.0.0-beta.28` and deleting the stale generated files the older version had left behind fixed it; it builds clean on Turbopack.
+
+First lesson: while chasing that, I anchored on a *warning* — an unrecognized config key — decided it meant a Next version mismatch, and did a whole 14→16 upgrade that wasn't the fix. The same fatal error had been there on 14 all along. The upgrade was worth keeping on its own merits, but that's not why I did it. Second lesson: after deleting those stale files I concluded the whole approach was blocked *without re-running the build* — drawing a conclusion from a result I'd already invalidated. Re-running was all it took. Change the inputs, re-run before you conclude.
 
 ---
 
@@ -93,6 +128,21 @@ The original rule needed two agents to independently propose exactly mirrored tr
 The mistake is conceptual. Real trading is asynchronous: you propose, then someone responds. The original design forced it to be simultaneous.
 
 So a turn now resolves in two rounds. Everyone decides blind in round one. In round two, any agent that got a trade offer gets a second LLM call showing all offers aimed at it — each with the proposer's current inventory, since round two is a fresh call with no memory of round one and I didn't want the agent deciding more blind than it had in round one — and it either accepts one or keeps its original plan.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant E as advanceTurn
+    participant B as Agent B
+    Note over A,B: Round 1 — everyone decides blind, in parallel
+    A->>E: TRADE offer aimed at B
+    B->>E: some round-1 plan
+    Note over E: collect offers, grouped by target
+    Note over A,B: Round 2 — only agents who received an offer get a second call
+    E->>B: offers aimed at you (+ each proposer's inventory)
+    B->>E: accept A's offer  ·  or keep my plan
+    Note over E: lock both agents, check affordability, swap
+```
 
 I considered a standing offer book across turns, which is closer to how markets actually work, but the proposer wastes its turn waiting and I'd have to persist offer state. I also considered letting both agents just name each other with the proposer's terms winning, but then the receiving agent has no say in terms it's bound by.
 
@@ -271,7 +321,7 @@ So: a mode where every agent starts identical. Same inventory, same actions, no 
 
 Both modes run the same engine and the same action set. What changes is which knobs the setup form exposes.
 
-This needs an explicit objective function first — what "doing well" even means, whether that's gold, survival, or total group welfare — because that's what any behavioral scoring gets measured against.
+This needs an explicit objective function first — what "doing well" even means, whether that's gold, survival, or total group welfare — because that's what any behavioral scoring gets measured against. The one I've settled on is a survival floor with gold as the tiebreaker: food is consumed each turn, an agent that runs out is eliminated, and gold ranks whoever's left. It's the next mechanic to land, and it's what makes the harm-and-generosity behavior the evals twin measures actually mean something — taking gold from someone who can't be hurt isn't a moral act, so scarcity has to exist before any of it is worth scoring.
 
 ---
 

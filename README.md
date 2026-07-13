@@ -1,5 +1,5 @@
 # Agora Village
-### STILL IN ACTIVE DEVELOPMENT! see its twin sister "agora evals" [HERE](https://github.com/hiuyear/agora-evals.git)
+### Deployed and feature-complete — with a twin project, [Agora Village Evals](https://github.com/hiuyear/agora-evals), that measures what the agents actually do.
 
 https://github.com/user-attachments/assets/aa1eee0a-3656-4f32-8456-3babe01fb49b
 
@@ -67,6 +67,8 @@ Five agents over thirty turns costs about $0.27 in API calls.
 
 ## Where it's at
 
-The simulation engine, persistence, replay, metrics, the live UI, and durable execution for long runs are built and deployed. I'm currently working on a two-round trade negotiation protocol.
+The simulation engine, persistence, replay, metrics, the live UI, durable execution for long runs, and a two-round trade negotiation protocol are all built and deployed. The base project is feature-complete.
 
-Next after that: symmetric agent starts, so that if an agent specializes it's because it chose to, not because I handed it a role. [Why that matters.](ARCHITECTURE.md#symmetric-starts)
+What's active now is the twin project, [Agora Village Evals](https://github.com/hiuyear/agora-evals) — an eval harness and observability layer that drives this sim through its API, captures every model call as OpenTelemetry traces, and reports calibrated behavioral metrics across the two model families with confidence intervals.
+
+Back here after that: a survival floor that gives the economy real stakes, so eliminating an agent or feeding a starving one finally means something — then symmetric agent starts, so that if an agent specializes it's because it chose to, not because I handed it a role. [Why that matters.](ARCHITECTURE.md#symmetric-starts)
