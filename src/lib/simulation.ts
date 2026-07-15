@@ -315,8 +315,8 @@ export async function advanceTurn(runId: string): Promise<SimState> {
 
     const results = await Promise.all(
         config.agents.map(async (agent) => {
-            const decision = await callAgent(agent.model, buildPrompt(agent, workingState))
-            return { agent, decision }
+            const { decision, usage } = await callAgent(agent.model, buildPrompt(agent, workingState))
+            return { agent, decision, usage }
         })
     )
 
@@ -347,11 +347,11 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     // (3) round 2: one acceptance call per TARGETED agent, in parallel
     const acceptanceResults = await Promise.all(
         Object.entries(offersByTarget).map(async ([target, offers]) => {
-            const acceptance = await callAcceptance(
+            const { acceptance, usage } = await callAcceptance(
                 configByName[target].model,
                 buildOfferPrompt(configByName[target], offers, decisions[target], workingState)
             )
-            return { target, acceptance }
+            return { target, acceptance, usage }
         })
     )
 
@@ -415,8 +415,16 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     // `results`: accepters were rewritten to their trade (6), declined proposers to REST.
     // `results` is still the source of agent identity (name/model); the action comes
     // from `decisions`. outcome (from resolveDecisions) says whether it executed.
+    // an agent's LLM footprint this turn = its action call, plus its acceptance
+    // call if it was a trade target. sum both so the cost/latency on the row is
+    // the agent's TOTAL for the turn, not just round 1.
+    const acceptanceUsageByAgent = Object.fromEntries(
+        acceptanceResults.map((a) => [a.target, a.usage])
+    )
+
     const decisionRows = results.map((r) => {
         const final = decisions[r.agent.name]
+        const acceptUsage = acceptanceUsageByAgent[r.agent.name]
         return {
             run_id: runId,
             turn_number: nextState.turn,
@@ -429,6 +437,12 @@ export async function advanceTurn(runId: string): Promise<SimState> {
             reasoning: final.reasoning,
             raw_response: null,
             outcome: outcomes[r.agent.name],
+            // intent = the ROUND-1 decision, before negotiation rewrote declined
+            // proposers to REST. this is what lets evals see refused offers (#8).
+            intent: r.decision,
+            input_tokens: r.usage.inputTokens + (acceptUsage?.inputTokens ?? 0),
+            output_tokens: r.usage.outputTokens + (acceptUsage?.outputTokens ?? 0),
+            latency_ms: r.usage.latencyMs + (acceptUsage?.latencyMs ?? 0),
         }
     })
 
