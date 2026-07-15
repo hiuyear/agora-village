@@ -28,6 +28,9 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
 Set "accept" to the name of the proposer whose offer you accept, or null to decline all offers and keep your plan.`
 
 
+type Usage = { inputTokens: number; outputTokens: number; latencyMs: number }
+type LLMResult = Usage & { text: string }
+
 export const DecisionSchema = z.object({
     action: z.enum(["FARM", "MINE", "TRADE", "REST"]),
     trade: z.object({
@@ -64,13 +67,11 @@ export function stripCodeFence(raw: string): string {
         .trim()
 }
 
-async function callLLM(model: string, systemPrompt: string, userPrompt: string): Promise<string> {
-    // the exact Anthropic/OpenAI branch you already have, but:
-    //   - `system:` / the system message use the systemPrompt PARAMETER (not a module const)
-    //   - the user content uses userPrompt
-    //   - end with:  return stripCodeFence(text)
+async function callLLM(model: string, systemPrompt: string, userPrompt: string): Promise<LLMResult> {
+    const started = Date.now()
 
     let text: string
+    let inputTokens = 0, outputTokens = 0
 
     if (model.startsWith("claude-")) {
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -86,6 +87,8 @@ async function callLLM(model: string, systemPrompt: string, userPrompt: string):
             throw new Error(`Unexpected response type: ${response.type}`)
         }
         text = response.text
+        inputTokens = msg.usage.input_tokens
+        outputTokens = msg.usage.output_tokens
 
     } else if (model.startsWith("gpt-")) {
         const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -104,19 +107,23 @@ async function callLLM(model: string, systemPrompt: string, userPrompt: string):
             throw new Error("OpenAI returned empty content")
         }
         text = content
+        inputTokens = completion.usage?.prompt_tokens ?? 0
+        outputTokens = completion.usage?.completion_tokens ?? 0
     } else {
         throw new Error(`Unknown model provider: ${model}`)
     }
 
-    return stripCodeFence(text)
-}   
-
-export async function callAgent(model: string, prompt: string): Promise<Decision> {
-    const text = await callLLM(model, actionSystemPrompt, prompt)
-    return DecisionSchema.parse(JSON.parse(text))
+    return { text: stripCodeFence(text), inputTokens, outputTokens, latencyMs: Date.now() - started }
 }
 
-export async function callAcceptance(model: string, prompt: string): Promise<Acceptance> {
-    const text = await callLLM(model, acceptanceSystemPrompt, prompt)
-    return AcceptanceSchema.parse(JSON.parse(text))
+export async function callAgent(model: string, prompt: string): Promise<{ decision: Decision; usage: Usage }> {
+    const r = await callLLM(model, actionSystemPrompt, prompt)
+    const { text, ...usage } = r
+    return { decision: DecisionSchema.parse(JSON.parse(text)), usage }
+}
+
+export async function callAcceptance(model: string, prompt: string): Promise<{ acceptance: Acceptance; usage: Usage }> {
+    const r = await callLLM(model, acceptanceSystemPrompt, prompt)
+    const { text, ...usage } = r
+    return { acceptance: AcceptanceSchema.parse(JSON.parse(text)), usage }
 }
