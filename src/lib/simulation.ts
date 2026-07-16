@@ -2,6 +2,7 @@ import { z } from "zod"
 import { Decision, Acceptance, callAgent, callAcceptance } from "./agent"
 import { computeMetrics } from "./metrics"
 import { supabase } from '@/lib/supabase'
+import { recordLLMSpan } from './telemetry'
 
 
 export type AgentConfig = {
@@ -316,6 +317,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
     const results = await Promise.all(
         config.agents.map(async (agent) => {
             const { decision, usage } = await callAgent(agent.model, buildPrompt(agent, workingState))
+            recordLLMSpan({ runId, turn: workingState.turn + 1, agent: agent.name, model: agent.model, ...usage })
             return { agent, decision, usage }
         })
     )
@@ -351,6 +353,7 @@ export async function advanceTurn(runId: string): Promise<SimState> {
                 configByName[target].model,
                 buildOfferPrompt(configByName[target], offers, decisions[target], workingState)
             )
+            recordLLMSpan({ runId, turn: workingState.turn + 1, agent: target, model: configByName[target].model, ...usage })
             return { target, acceptance, usage }
         })
     )
